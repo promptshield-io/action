@@ -1,0 +1,33 @@
+name: Update Major Version Tag
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required to push tags
+
+      - name: Update Floating Major Tag
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          MAJOR_VERSION=$(echo "$TAG_NAME" | cut -d'.' -f1)
+          
+          echo "Release tag: $TAG_NAME"
+          echo "Updating floating tag: $MAJOR_VERSION"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git tag -fa "$MAJOR_VERSION" -m "Auto-update floating tag to $TAG_NAME"
+          
+          git push origin "$MAJOR_VERSION" --force
