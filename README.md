@@ -1,6 +1,6 @@
 # PromptShield Action
 
-GitHub Action for integrating [PromptShield CLI](https://promptshield.js.org/docs/cli/overview/?utm_source=chatgpt.com) into CI/CD pipelines — effectively an **ESLint for prompts**.
+GitHub Action for integrating [PromptShield CLI](https://promptshield.js.org/docs/cli/overview/) into CI/CD pipelines — effectively an **ESLint for prompts**.
 It scans repositories for prompt injection risks, insecure AI patterns, jailbreak attempts, and unsafe LLM configurations before they reach production. 🛡️
 
 ## Features
