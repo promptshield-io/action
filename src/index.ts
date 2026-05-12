@@ -4,7 +4,7 @@ import * as core from "@actions/core";
 import * as exec from "@actions/exec";
 import * as github from "@actions/github";
 
-const cliVersion = "1.0.5";
+const cliVersion = "1.1.0";
 
 interface Threat {
   severity: string;
