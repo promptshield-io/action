@@ -1,11 +1,13 @@
 {
   "name": "@promptshield-io/action",
   "version": "1.0.0",
+  "private": true,
   "description": "GitHub Action for PromptShield",
+  "license": "MIT",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "ncc build src/index.ts -o dist --minify --no-cache"
+    "build": "rm -rf .promptshield/ && ncc build src/index.ts -o dist --minify --no-cache"
   },
   "dependencies": {
     "@actions/core": "^1.11.1",
@@ -16,6 +18,19 @@
     "@promptshield/cli": "latest",
     "@types/node": "^22.0.0",
     "@vercel/ncc": "^0.38.3",
-    "typescript": "^5.7.0"
-  }
+    "typescript": "^5.7.0",
+    "husky": "^9.1.7"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "keywords": [
+    "github-action",
+    "promptshield",
+    "promptlint",
+    "security",
+    "prompt-injection",
+    "ai-security",
+    "llm-security"
+  ]
 }

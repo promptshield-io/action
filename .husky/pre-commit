@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Bypass check for GitHub Actions or automated commits
+if [ "$GITHUB_ACTIONS" = "true" ]; then
+  exit 0
+fi
+
+echo "Running PromptShield pre-commit check..."
+pnpx @promptshield/cli src/** --check

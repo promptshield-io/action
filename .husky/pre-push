@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Build to ensure dist is up to date
+pnpm build
