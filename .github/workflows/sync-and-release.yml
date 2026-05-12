@@ -14,7 +14,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.PAT_FOR_RELEASES }}
 
       - name: Fetch Latest NPM Version
         id: npm-check
