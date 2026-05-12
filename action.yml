@@ -1,32 +1,33 @@
 name: 'PromptShield Scan'
-description: 'ESLint for Prompts. Scan your repository for prompt injection vulnerabilities and risks.'
+description: 'The ESLint for Prompts. Scan for lexical vulnerabilities and injection risks.'
 branding:
   icon: 'shield'
   color: 'blue'
 inputs:
   patterns:
-    description: 'Glob patterns for scan'
+    description: 'Glob patterns for scan (e.g., "prompts/**/*.md")'
     required: false
     default: '**/*'
   min-severity:
-    description: 'Severity threshold (LOW, MEDIUM, HIGH, CRITICAL)'
+    description: 'Minimum severity to report (LOW, MEDIUM, HIGH, CRITICAL)'
     required: false
     default: 'LOW'
   no-inline-ignore:
-    description: 'Disable source-code suppresses'
+    description: 'If true, ignores promptshield-ignore comments'
     required: false
     default: 'true'
   report:
-    description: 'Generate and post Markdown audit'
+    description: 'Post a detailed Markdown audit as a PR comment'
     required: false
     default: 'true'
   scan-mode:
-    description: 'Scan mode: "full" or "diff". "auto" defaults to diff for PR/Push, full otherwise.'
+    description: 'Scan mode: "full", "diff", or "auto"'
     required: false
     default: 'auto'
   token:
     description: 'GITHUB_TOKEN for PR comments'
     required: false
+    default: ${{ github.token }}
 runs:
-  using: 'node22'
+  using: 'node24'
   main: 'dist/index.js'

@@ -1,4 +1,14 @@
 #!/bin/sh
 
-# Build to ensure dist is up to date
+# 1. Build the project
 pnpm build
+
+# 2. Check if dist/ has uncommitted changes
+if [ -n "$(git status --porcelain dist/)" ]; then
+  echo "❌ Error: dist/ is out of sync with src/."
+  echo "Run 'pnpm build', commit the changes in dist/, and try again."
+  exit 1
+fi
+
+echo "✅ dist/ is up to date. Proceeding with push..."
+exit 0
