@@ -17,16 +17,8 @@ interface Threat {
   loc?: { start?: { line: number; column: number }; line?: number; column?: number };
 }
 
-interface CacheEntry {
-  results: {
-    threats: Threat[];
-    ignoredBySeverity: Record<string, number>;
-  };
-}
-
-interface CacheSchema {
-  entries: Record<string, CacheEntry>;
-}
+// Updated to match workspace-report.json structure
+type ReportSchema = Record<string, { threats: Threat[] }>;
 
 // --- Utilities ---
 const getChangedFiles = async (token: string): Promise<string[]> => {
@@ -102,15 +94,15 @@ const getChangedFiles = async (token: string): Promise<string[]> => {
   return [];
 };
 
-const processCache = (cachePath: string) => {
+const processReport = (reportJsonPath: string) => {
   const counts = { CRITICAL: 0, HIGH: 0, LOW: 0 };
   let threatsFound = false;
 
   try {
-    const cacheData: CacheSchema = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+    const reportData: ReportSchema = JSON.parse(fs.readFileSync(reportJsonPath, "utf8"));
 
-    for (const [file, data] of Object.entries(cacheData.entries || {})) {
-      for (const threat of data.results?.threats || []) {
+    for (const [file, data] of Object.entries(reportData)) {
+      for (const threat of data.threats || []) {
         const severity = (threat.severity || "LOW").toUpperCase();
         const message =
           threat.message || threat.description || threat.rule || threat.name || "Threat Detected";
@@ -136,7 +128,7 @@ const processCache = (cachePath: string) => {
       }
     }
   } catch (e) {
-    core.warning(`Failed to parse cache.json: ${e instanceof Error ? e.message : e}`);
+    core.warning(`Failed to parse workspace-report.json: ${e instanceof Error ? e.message : e}`);
   }
 
   return { counts, threatsFound };
@@ -147,8 +139,8 @@ const upsertPRComment = async (token: string, body: string) => {
   if (!context.payload.pull_request) return;
 
   const octokit = github.getOctokit(token);
-  // promptshield-ignore-next-line
-  const signature = "<!-- promptshield-report -->";
+  const signature =
+    "🛡️ [PromptShield](https://github.com/promptshield-io/promptshield) — Found an edge case? [Report it](https://github.com/promptshield-io/promptshield/issues). Love the shield? ⭐ [Star the repo](https://github.com/promptshield-io/promptshield).";
   const finalBody = `${body}\n\n${signature}`;
 
   const safeBody =
@@ -240,7 +232,7 @@ const run = async (): Promise<void> => {
       return;
     }
 
-    args.push("--report");
+    args.push("--report", "--json");
     core.info(`Running Audit Mode (v${cliVersion}) with args: ${args.join(" ")}`);
 
     let exitCode = 0;
@@ -264,10 +256,10 @@ const run = async (): Promise<void> => {
     }
 
     const reportPath = path.join(process.cwd(), ".promptshield/workspace-report.md");
-    const cachePath = path.join(process.cwd(), ".promptshield/cache.json");
-    const cacheExists = fs.existsSync(cachePath);
+    const reportJsonPath = path.join(process.cwd(), ".promptshield/workspace-report.json");
+    const jsonExists = fs.existsSync(reportJsonPath);
 
-    if (exitCode === 0 && !cacheExists) {
+    if (exitCode === 0 && !jsonExists) {
       core.info("✅ Zero threats detected.");
 
       if (token && report) {
@@ -283,7 +275,7 @@ const run = async (): Promise<void> => {
       return;
     }
 
-    if (exitCode !== 0 && !cacheExists) {
+    if (exitCode !== 0 && !jsonExists) {
       core.setFailed(
         "❌ Forensic failure: CLI crashed or encountered an environment error. Check logs.",
       );
@@ -295,7 +287,7 @@ const run = async (): Promise<void> => {
       await upsertPRComment(token, reportContent);
     }
 
-    const { counts, threatsFound } = processCache(cachePath);
+    const { counts, threatsFound } = processReport(reportJsonPath);
 
     await core.summary
       .addHeading("PromptShield Security Report")
