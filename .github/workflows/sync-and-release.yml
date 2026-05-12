@@ -54,15 +54,15 @@ jobs:
           MAJOR=$(echo "$VERSION" | cut -d'.' -f1)
           
           # Check if tag already exists to avoid failures on manual re-runs
-          if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
-            git tag -a "$VERSION" -m "Release $VERSION"
-            git push origin "$VERSION"
+          if ! git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            git tag -a "v$VERSION" -m "Release v$VERSION"
+            git push origin "v$VERSION"
             
             # Update the major floating tag (e.g., v1)
-            git tag -fa "v$MAJOR" -m "Update v$MAJOR to $VERSION"
+            git tag -fa "v$MAJOR" -m "Update v$MAJOR to v$VERSION"
             git push origin "v$MAJOR" --force
           else
-            echo "Tag $VERSION already exists. Skipping tag creation."
+            echo "Tag v$VERSION already exists. Skipping tag creation."
           fi
 
       - name: Create GitHub Release
