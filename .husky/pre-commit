@@ -7,3 +7,6 @@ fi
 
 echo "Running PromptShield pre-commit check..."
 pnpx @promptshield/cli src/** --check
+
+echo "Running Biome check..."
+pnpm biome check --write --no-errors-on-unmatched
