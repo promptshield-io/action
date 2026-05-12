@@ -28,33 +28,57 @@ interface CacheSchema {
 
 // --- Utilities ---
 const getChangedFiles = async (token: string): Promise<string[]> => {
-  const context = github.context;
+  const { context } = github;
 
-  if (token && context.eventName === 'pull_request') {
-    try {
-      const octokit = github.getOctokit(token);
-      const { data: files } = await octokit.rest.pulls.listFiles({
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        pull_number: context.payload.pull_request!.number,
-        per_page: 100,
-      });
-      return files.map((f) => f.filename);
-    } catch (e) {
-      core.warning(`Failed to fetch PR files via API: ${e instanceof Error ? e.message : e}`);
+  if (context.eventName === 'pull_request') {
+    if (token) {
+      try {
+        const octokit = github.getOctokit(token);
+        const { data: files } = await octokit.rest.pulls.listFiles({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          pull_number: context.payload.pull_request!.number,
+          per_page: 100,
+        });
+        return files.map((f) => f.filename);
+      } catch (e) {
+        core.warning(`API fetch failed, falling back to Git: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+
+    const base = context.payload.pull_request?.base?.sha;
+    const head = context.payload.pull_request?.head?.sha;
+    
+    if (base && head) {
+      try {
+        let output = '';
+        await exec.exec('git', ['diff', '--name-only', base, head], {
+          listeners: { stdout: (data) => { output += data.toString(); } },
+        });
+        return output.split('\n').map((f) => f.trim()).filter(Boolean);
+      } catch (e) {
+        core.warning(`Git diff fallback failed: ${e instanceof Error ? e.message : e}`);
+      }
     }
   }
 
-  // Fallback for Push events
   if (context.eventName === 'push') {
+    const before = context.payload.before;
+    const after = context.payload.after;
+
+    if (before === '0000000000000000000000000000000000000000') {
+      core.info('Zero SHA detected (new branch). Bypassing diff.');
+      return [];
+    }
+
     try {
       let output = '';
-      await exec.exec('git', ['diff', '--name-only', context.payload.before, context.payload.after], {
+      await exec.exec('git', ['diff', '--name-only', before, after], {
         listeners: { stdout: (data) => { output += data.toString(); } },
       });
       return output.split('\n').map((f) => f.trim()).filter(Boolean);
     } catch (e) {
-      core.warning(`Git diff fallback failed: ${e instanceof Error ? e.message : e}`);
+      core.warning(`Git push diff failed: ${e instanceof Error ? e.message : e}`);
     }
   }
   return [];
@@ -63,11 +87,6 @@ const getChangedFiles = async (token: string): Promise<string[]> => {
 const processCache = (cachePath: string) => {
   const counts = { CRITICAL: 0, HIGH: 0, LOW: 0 };
   let threatsFound = false;
-
-  if (!fs.existsSync(cachePath)) {
-    core.info('cache.json not found, assuming no threats or scan failed.');
-    return { counts, threatsFound };
-  }
 
   try {
     const cacheData: CacheSchema = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
@@ -86,7 +105,7 @@ const processCache = (cachePath: string) => {
           core.error(message, props);
           threatsFound = true;
         } else {
-          counts.LOW++; // Groups LOW and MEDIUM
+          counts.LOW++;
           core.warning(message, props);
           threatsFound = true;
         }
@@ -97,6 +116,48 @@ const processCache = (cachePath: string) => {
   }
 
   return { counts, threatsFound };
+};
+
+const upsertPRComment = async (token: string, body: string) => {
+  const { context } = github;
+  if (!context.payload.pull_request) return;
+
+  const octokit = github.getOctokit(token);
+  // promptshield-ignore-next-line
+  const signature = '<!-- promptshield-report -->';
+  const finalBody = `${body}\n\n${signature}`;
+
+  // Truncate to avoid 422 Unprocessable Entity limit (65536 chars)
+  const safeBody = finalBody.length > 65000 
+    ? `${finalBody.substring(0, 64500)}\n\n*...Report truncated due to GitHub size limits...*\n\n${signature}` 
+    : finalBody;
+
+  try {
+    const { data: comments } = await octokit.rest.issues.listComments({
+      ...context.repo,
+      issue_number: context.payload.pull_request.number,
+    });
+
+    const existingComment = comments.find(c => c.body?.includes(signature));
+
+    if (existingComment) {
+      await octokit.rest.issues.updateComment({
+        ...context.repo,
+        comment_id: existingComment.id,
+        body: safeBody,
+      });
+      core.info('Updated existing PR comment.');
+    } else {
+      await octokit.rest.issues.createComment({
+        ...context.repo,
+        issue_number: context.payload.pull_request.number,
+        body: safeBody,
+      });
+      core.info('Created new PR comment.');
+    }
+  } catch (e) {
+    core.warning(`Failed to post/update PR comment: ${e instanceof Error ? e.message : e}`);
+  }
 };
 
 // --- Main Execution ---
@@ -113,63 +174,84 @@ const run = async (): Promise<void> => {
       scanMode = ['pull_request', 'push'].includes(github.context.eventName) ? 'diff' : 'full';
     }
 
-    const args = ['--yes', '@promptshield/cli', 'scan', `--min-severity=${minSeverity}`];
-    if (noInlineIgnore) args.push('--no-inline-ignore');
+    let filesToScan: string[] = [];
 
     if (scanMode === 'diff') {
       const changedFiles = await getChangedFiles(token);
       if (changedFiles.length > 0) {
-        args.push(...changedFiles);
+        filesToScan = changedFiles;
         core.info(`Diff mode: scanning ${changedFiles.length} changed files.`);
       } else {
-        core.info('No changed files found. Falling back to full scan.');
-        args.push(patterns);
+        core.info('No diff resolved. Falling back to full pattern scan.');
+        filesToScan = [patterns];
       }
     } else {
-      args.push(patterns);
+      filesToScan = [patterns];
     }
 
+    if (filesToScan.length === 0) {
+      core.info('No files matched the scan criteria. Exiting cleanly.');
+      return;
+    }
+
+    const args = ['--yes', '@promptshield/cli', 'scan', ...filesToScan, `--min-severity=${minSeverity}`, '--cache-mode=single'];
+    if (noInlineIgnore) args.push('--no-inline-ignore');
+
     if (!report) {
-      // Gatekeeper Mode
       args.push('--check');
       core.info(`Running Gatekeeper Mode...`);
       try {
-        await exec.exec('npx', args); // Safer execution, arguments auto-escaped
+        await exec.exec('npx', args);
         core.info('Scan completed successfully with no threats found.');
       } catch (error) {
-        core.setFailed(`Gatekeeper scan failed. Threats detected.`);
+        core.setFailed(`Gatekeeper scan failed. Lexical threats detected.`);
       }
-      return; // Exit early
+      return; 
     }
 
-    // Audit Mode
     args.push('--report');
-    core.info(`Running Audit Mode...`);
+    core.info(`Running Audit Mode with args: ${args.join(' ')}`);
     
+    let exitCode = 0;
+    
+    const execOptions: exec.ExecOptions = {
+      ignoreReturnCode: true,
+      listeners: {
+        stdout: (data: Buffer) => { process.stdout.write(data.toString()); },
+        stderr: (data: Buffer) => { process.stderr.write(data.toString()); }
+      }
+    };
+
     try {
-      await exec.exec('npx', args, { ignoreReturnCode: true }); // We evaluate success based on cache, not exit code
+      exitCode = await exec.exec('npx', args, execOptions);
     } catch (e) {
-      core.info('CLI execution finished.');
+      core.error(`Exec exception: ${e instanceof Error ? e.message : e}`);
+      exitCode = 1;
     }
+
+    core.info(`CLI exited with code: ${exitCode}`);
 
     const reportPath = path.join(process.cwd(), '.promptshield/workspace-report.md');
     const cachePath = path.join(process.cwd(), '.promptshield/cache.json');
+    const cacheExists = fs.existsSync(cachePath);
 
-    // Handle PR Comment
-    if (token && fs.existsSync(reportPath) && github.context.payload.pull_request) {
-      const octokit = github.getOctokit(token);
-      await octokit.rest.issues.createComment({
-        ...github.context.repo,
-        issue_number: github.context.payload.pull_request.number,
-        body: fs.readFileSync(reportPath, 'utf8'),
-      });
-      core.info('Posted report as PR comment.');
+    if (exitCode === 0 && !cacheExists) {
+      core.info('✅ Zero threats detected. No cache generated.');
+      return; 
     }
 
-    // Parse Cache & Annotate
+    if (exitCode !== 0 && !cacheExists) {
+      core.setFailed("❌ Forensic failure: CLI crashed or encountered an environment error. Check the raw logs above.");
+      return;
+    }
+
+    if (token && fs.existsSync(reportPath)) {
+      const reportContent = fs.readFileSync(reportPath, 'utf8');
+      await upsertPRComment(token, reportContent);
+    }
+
     const { counts, threatsFound } = processCache(cachePath);
 
-    // Generate Summary
     await core.summary
       .addHeading('PromptShield Security Report')
       .addTable([
@@ -181,7 +263,7 @@ const run = async (): Promise<void> => {
       .write();
 
     if (threatsFound) {
-      core.setFailed(`Threats found: ${counts.CRITICAL} Critical, ${counts.HIGH} High, ${counts.LOW} Low/Medium.`);
+      core.setFailed(`Lexical Integrity Compromised: ${counts.CRITICAL} Critical, ${counts.HIGH} High, ${counts.LOW} Low/Medium.`);
     } else {
       core.info('No threats found.');
     }

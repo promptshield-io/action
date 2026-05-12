@@ -34,6 +34,10 @@ name: Security Scan
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   promptshield:
     runs-on: ubuntu-latest
