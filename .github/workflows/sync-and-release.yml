@@ -1,0 +1,82 @@
+name: Sync & Release CLI
+
+on:
+  repository_dispatch:
+    types: [cli-updated]
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  sync-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_FOR_RELEASES }}
+
+      - name: Fetch Latest NPM Version
+        id: npm-check
+        run: |
+          # Pull the actual latest version published to registry
+          LATEST_VER=$(npm view @promptshield/cli version)
+          echo "latest_version=$LATEST_VER" >> $GITHUB_OUTPUT
+          echo "Detected Latest CLI: $LATEST_VER"
+
+      - name: Update Action Source
+        run: |
+          NEW_VER="${{ steps.npm-check.outputs.latest_version }}"
+          # Update the hardcoded version in your TypeScript source
+          sed -i "s/const cliVersion = \".*\";/const cliVersion = \"$NEW_VER\";/" src/index.ts
+          echo "Source updated to $NEW_VER"
+
+      - name: Build Action
+        run: |
+          npm install
+          npm run build # Generate the new dist/index.js
+
+      - name: Commit and Push Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          if [[ -n $(git status -s) ]]; then
+            git add .
+            git commit -m "chore: sync with @promptshield/cli@${{ steps.npm-check.outputs.latest_version }}"
+            git push
+          else
+            echo "No changes to commit; version already synced."
+          fi
+
+      - name: Tag and Floating Major Release
+        run: |
+          VERSION="${{ steps.npm-check.outputs.latest_version }}"
+          MAJOR=$(echo "$VERSION" | cut -d'.' -f1)
+          
+          # Check if tag already exists to avoid failures on manual re-runs
+          if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+            git tag -a "$VERSION" -m "Release $VERSION"
+            git push origin "$VERSION"
+            
+            # Update the major floating tag (e.g., v1)
+            git tag -fa "v$MAJOR" -m "Update v$MAJOR to $VERSION"
+            git push origin "v$MAJOR" --force
+          else
+            echo "Tag $VERSION already exists. Skipping tag creation."
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.npm-check.outputs.latest_version }}
+          name: Release ${{ steps.npm-check.outputs.latest_version }}
+          body: |
+            ## 🛡️ PromptShield Action Sync
+            Automatically updated to track `@promptshield/cli@${{ steps.npm-check.outputs.latest_version }}`.
+            
+            ### Changes in this version
+            See the [CLI Changelog](https://github.com/promptshield/promptshield/blob/main/packages/cli/CHANGELOG.md) for details.
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(steps.npm-check.outputs.latest_version, 'alpha') || contains(steps.npm-check.outputs.latest_version, 'beta') }}

@@ -4,6 +4,8 @@ import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
 
+const cliVersion = '1.0.0';
+
 interface Threat {
   severity: string;
   message?: string;
@@ -112,7 +114,7 @@ const processCache = (cachePath: string) => {
       });
     });
   } catch (e) {
-    core.warning(`Failed to parse cache.json deterministically: ${e instanceof Error ? e.message : e}`);
+    core.warning(`Failed to parse cache.json: ${e instanceof Error ? e.message : e}`);
   }
 
   return { counts, threatsFound };
@@ -127,7 +129,6 @@ const upsertPRComment = async (token: string, body: string) => {
   const signature = '<!-- promptshield-report -->';
   const finalBody = `${body}\n\n${signature}`;
 
-  // Truncate to avoid 422 Unprocessable Entity limit (65536 chars)
   const safeBody = finalBody.length > 65000 
     ? `${finalBody.substring(0, 64500)}\n\n*...Report truncated due to GitHub size limits...*\n\n${signature}` 
     : finalBody;
@@ -194,12 +195,12 @@ const run = async (): Promise<void> => {
       return;
     }
 
-    const args = ['--yes', '@promptshield/cli', 'scan', ...filesToScan, `--min-severity=${minSeverity}`, '--cache-mode=single'];
+    const args = ['--yes', `@promptshield/cli@${cliVersion}`, 'scan', ...filesToScan, `--min-severity=${minSeverity}`, '--cache-mode=single'];
     if (noInlineIgnore) args.push('--no-inline-ignore');
 
     if (!report) {
       args.push('--check');
-      core.info(`Running Gatekeeper Mode...`);
+      core.info(`Running Gatekeeper Mode (v${cliVersion})...`);
       try {
         await exec.exec('npx', args);
         core.info('Scan completed successfully with no threats found.');
@@ -210,10 +211,9 @@ const run = async (): Promise<void> => {
     }
 
     args.push('--report');
-    core.info(`Running Audit Mode with args: ${args.join(' ')}`);
+    core.info(`Running Audit Mode (v${cliVersion}) with args: ${args.join(' ')}`);
     
     let exitCode = 0;
-    
     const execOptions: exec.ExecOptions = {
       ignoreReturnCode: true,
       listeners: {
@@ -229,19 +229,28 @@ const run = async (): Promise<void> => {
       exitCode = 1;
     }
 
-    core.info(`CLI exited with code: ${exitCode}`);
-
     const reportPath = path.join(process.cwd(), '.promptshield/workspace-report.md');
     const cachePath = path.join(process.cwd(), '.promptshield/cache.json');
     const cacheExists = fs.existsSync(cachePath);
 
     if (exitCode === 0 && !cacheExists) {
-      core.info('✅ Zero threats detected. No cache generated.');
+      core.info('✅ Zero threats detected.');
+      
+      if (token && report) {
+        const successMsg = `## 🛡️ PromptShield Scan: Success\n\n✅ No lexical threats detected in the scanned files. (v${cliVersion})`;
+        await upsertPRComment(token, successMsg);
+      }
+
+      await core.summary
+        .addHeading('PromptShield Security Report')
+        .addRaw('✅ **No threats found.** All files passed the lexical integrity check.')
+        .write();
+        
       return; 
     }
 
     if (exitCode !== 0 && !cacheExists) {
-      core.setFailed("❌ Forensic failure: CLI crashed or encountered an environment error. Check the raw logs above.");
+      core.setFailed("❌ Forensic failure: CLI crashed or encountered an environment error. Check logs.");
       return;
     }
 
