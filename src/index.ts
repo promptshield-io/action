@@ -179,7 +179,9 @@ const upsertPRComment = async (token: string, body: string) => {
 // --- Main Execution ---
 const run = async (): Promise<void> => {
   try {
-    const patterns = core.getInput("patterns") || "**/*";
+    const rawPatterns = core.getInput("patterns");
+    const parsedPatterns = rawPatterns ? rawPatterns.split(/[\s\n]+/).filter(Boolean) : ["**/*"];
+
     const minSeverity = core.getInput("min-severity") || "LOW";
     const noInlineIgnore = core.getInput("no-inline-ignore") === "true";
     const report = core.getInput("report") === "true";
@@ -200,16 +202,11 @@ const run = async (): Promise<void> => {
         filesToScan = changedFiles;
         core.info(`Diff mode: scanning ${changedFiles.length} changed files.`);
       } else {
-        core.info("No diff resolved. Falling back to full pattern scan.");
-        filesToScan = [patterns];
+        core.info("Diff resolved 0 files. Exiting.");
+        return;
       }
     } else {
-      filesToScan = [patterns];
-    }
-
-    if (filesToScan.length === 0) {
-      core.info("No files matched the scan criteria. Exiting cleanly.");
-      return;
+      filesToScan = parsedPatterns;
     }
 
     const args = [
