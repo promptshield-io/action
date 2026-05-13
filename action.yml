@@ -28,6 +28,13 @@ inputs:
     description: 'GITHUB_TOKEN for PR comments'
     required: false
     default: ${{ github.token }}
+  base-url:
+    description: 'Base URL for absolute file links in the generated report'
+    required: false
+  report-file-name:
+    description: 'Custom report filename (without extension)'
+    required: false
+    default: 'workspace-report'
 runs:
   using: 'node24'
   main: 'dist/index.js'

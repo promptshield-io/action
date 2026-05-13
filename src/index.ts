@@ -184,6 +184,8 @@ const run = async (): Promise<void> => {
     const noInlineIgnore = core.getInput("no-inline-ignore") === "true";
     const report = core.getInput("report") === "true";
     const token = core.getInput("token");
+    const baseUrl = core.getInput("base-url");
+    const reportFileName = core.getInput("report-file-name") || "workspace-report";
     let scanMode = core.getInput("scan-mode") || "auto";
 
     if (scanMode === "auto") {
@@ -220,6 +222,16 @@ const run = async (): Promise<void> => {
     ];
     if (noInlineIgnore) args.push("--no-inline-ignore");
 
+    let finalBaseUrl = baseUrl;
+    if (!finalBaseUrl && github.context.repo) {
+      const { owner, repo } = github.context.repo;
+      const sha = github.context.payload.pull_request?.head?.sha || github.context.sha;
+      finalBaseUrl = `https://github.com/${owner}/${repo}/blob/${sha}`;
+    }
+
+    if (finalBaseUrl) args.push(`--base-url=${finalBaseUrl}`);
+    if (reportFileName) args.push(`--report-file-name=${reportFileName}`);
+
     if (!report) {
       args.push("--check");
       core.info(`Running Gatekeeper Mode (v${cliVersion})...`);
@@ -255,8 +267,8 @@ const run = async (): Promise<void> => {
       exitCode = 1;
     }
 
-    const reportPath = path.join(process.cwd(), ".promptshield/workspace-report.md");
-    const reportJsonPath = path.join(process.cwd(), ".promptshield/workspace-report.json");
+    const reportPath = path.join(process.cwd(), `.promptshield/${reportFileName}.md`);
+    const reportJsonPath = path.join(process.cwd(), `.promptshield/${reportFileName}.json`);
     const jsonExists = fs.existsSync(reportJsonPath);
 
     if (exitCode === 0 && !jsonExists) {
